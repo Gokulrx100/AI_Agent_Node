@@ -12,7 +12,9 @@
   "description": "",
   "dependencies": {
     "@google/genai": "^1.19.0",
+    "@langchain/google-genai": "^0.2.18",
     "dotenv": "^17.2.2",
+    "langchain": "^0.3.34",
     "typescript": "^5.9.2"
   },
   "devDependencies": {
