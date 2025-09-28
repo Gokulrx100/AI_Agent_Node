@@ -1,5 +1,9 @@
-import { GoogleGenAI, type FunctionDeclaration } from "@google/genai";
+import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { DynamicTool } from "@langchain/core/tools";
+import { AgentExecutor, createToolCallingAgent } from "langchain/agents";
+import { ChatPromptTemplate } from "@langchain/core/prompts";
 import dotenv from "dotenv";
+
 dotenv.config();
 
 const calculateSum = (a: number, b: number): number => {
@@ -14,134 +18,77 @@ const calculatePower = (a: number, b: number): number => {
   return Math.pow(a, b);
 };
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-
-const sumFuctionCall: FunctionDeclaration = {
+const sumTool = new DynamicTool({
   name: "sum",
-  description: "This tool is used to find the sum of 2 numbers",
-  parametersJsonSchema: {
-    type: "object",
-    properties: {
-      a: {
-        type: "number",
-      },
-      b: {
-        type: "number",
-      },
-    },
-    required: ["a", "b"],
-  },
-};
-
-const productFucntionCall: FunctionDeclaration = {
-  name: "product",
-  description: "This tool is used to find product of two numbers",
-  parametersJsonSchema: {
-    type: "object",
-    properties: {
-      a: {
-        type: "number",
-      },
-      b: {
-        type: "number",
-      },
-    },
-    required: ["a", "b"],
-  },
-};
-
-const powerFunctionCall: FunctionDeclaration = {
-  name: "power",
-  description: "This tool is used to raise a number to the power of another",
-  parametersJsonSchema: {
-    type: "object",
-    properties: {
-      a: {
-        type: "number",
-      },
-      b: {
-        type: "number",
-      },
-    },
-    required: ["a", "b"],
-  },
-};
-
-
-const response = await ai.models.generateContent({
-  model: "gemini-2.5-flash",
-  contents: "First calculate 3 + 4, then multiply the result by 2, then raise it to the power of 2",
-  config: {
-    tools: [{ functionDeclarations: [sumFuctionCall, productFucntionCall, powerFunctionCall] }],
+  description: "Add two numbers together. Input should be two numbers separated by a comma.",
+  func: async (input: string) => {
+    const [a, b] = input.split(",").map(x => parseFloat(x.trim()));
+    if (a == null || b == null || isNaN(a) || isNaN(b)) {
+      return "Invalid input. Please provide two numbers separated by a comma.";
+    }
+    const result = calculateSum(a, b);
+    console.log(`sum(${a}, ${b}) = ${result}`);
+    return result.toString();
   },
 });
 
-if (!response) {
-  process.exit();
-}
-
-const functionCalls = response.functionCalls;
-
-if (functionCalls && functionCalls.length > 0) {
-  console.log(`Processing ${functionCalls.length} function calls`);
-
-  const functionResponses = [];
-  let intermediateResult : number | null = null;
-
-  for (const call of functionCalls) {
-    console.log(`Executing ${call.name} with args : `, call.args);
-
-    const a = intermediateResult !== null ? intermediateResult : typeof call?.args?.a === "number" ? call.args.a : Number(call?.args?.a);
-    const b = typeof call?.args?.b === "number" ? call.args.b : Number(call?.args?.b);
-
-    let functionResult : number;
-    switch (call.name) {
-      case "sum":
-        functionResult = calculateSum(a, b);
-        break;
-      case  "product":
-        functionResult = calculateProduct(a,b);
-        break;
-      case "power":
-        functionResult = calculatePower(a, b);
-        break;
-      default:
-        functionResult = NaN;
+const productTool = new DynamicTool({
+  name: "product",
+  description: "Multiply two numbers together. Input should be two numbers separated by a comma.",
+  func: async (input: string) => {
+    const [a, b] = input.split(",").map(x => parseFloat(x.trim()));
+    if (a == null || b == null || isNaN(a) || isNaN(b)) {
+      return "Invalid input. Please provide two numbers separated by a comma.";
     }
+    const result = calculateProduct(a, b);
+    console.log(`product(${a}, ${b}) = ${result}`);
+    return result.toString();
+  },
+});
 
-    console.log(`function ${call.name}(${a}, ${b}) = ${functionResult}`);
-    intermediateResult = functionResult;
+const powerTool = new DynamicTool({
+  name: "power",
+  description: "Raise the first number to the power of the second number. Input should be two numbers separated by a comma.",
+  func: async (input: string) => {
+    const [a, b] = input.split(",").map(x => parseFloat(x.trim()));
+    if (a == null || b == null || isNaN(a) || isNaN(b)) {
+      return "Invalid input. Please provide two numbers separated by a comma.";
+    }
+    const result = calculatePower(a, b);
+    console.log(`power(${a}, ${b}) = ${result}`);
+    return result.toString();
+  },
+});
 
-    functionResponses.push({
-      functionResponse: {
-        name: call.name ?? "unknown",
-        response: { result: functionResult },
-      },
-    });
-  }
+const tools = [sumTool, productTool, powerTool];
 
-  const contentsArray = [
-    {
-      role: "user",
-      parts: [{ text: "First calculate 3 + 4, then multiply the result by 2, then raise it to the power of 2" }],
-    },
-    ...(response.candidates && response.candidates[0]?.content
-      ? [response.candidates[0].content]
-      : []),
-    {
-      role: "user",
-      parts: functionResponses,
-    },
-  ];
+const model = new ChatGoogleGenerativeAI({
+  model: "gemini-2.0-flash-exp",
+  temperature: 0,
+  apiKey: process.env.GEMINI_API_KEY!,
+});
 
-  const finalResult = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: contentsArray,
-  });
-  console.log(
-    "final result:",
-    finalResult.candidates?.[0]?.content?.parts?.[0]?.text ?? "No response text"
-  );
-} else {
-  console.log("Direct response: ", response.text);
-}
+const prompt = ChatPromptTemplate.fromMessages([
+  ["system", "You are a helpful assistant that can perform mathematical calculations using the available tools."],
+  ["placeholder", "{chat_history}"],
+  ["human", "{input}"],
+  ["placeholder", "{agent_scratchpad}"],
+]);
+
+const agent = await createToolCallingAgent({
+  llm: model,
+  tools,
+  prompt,
+});
+
+const agentExecutor = new AgentExecutor({
+  agent,
+  tools,
+  verbose: false,
+});
+
+const result = await agentExecutor.invoke({
+  input: "First calculate 3 + 4, then multiply the result by 2, then raise it to the power of 2"
+});
+
+console.log("Final result:", result.output);
